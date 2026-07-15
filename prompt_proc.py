@@ -4,9 +4,17 @@
 
 # Query conversation history, agent note, user note to gather context
 
+import asyncio
 from enum import Enum
 
+import anthropic
+
 from message_api import TABLE, _get_client
+from sarah_system_prompt import SARAH_SYSTEM_PROMPT
+
+# Created once and reused (keeps its connection pool warm). Reads
+# ANTHROPIC_API_KEY from the environment (loaded from .env by message_api).
+_llm = anthropic.AsyncAnthropic()
 
 
 class MdType(Enum):
@@ -76,11 +84,48 @@ async def get_conversation(phone_number: str) -> list[dict]:
     )
     return response.data
 
-# Query the agent note text
 
-# Query the user note text
+def _render_history(rows: list[dict]) -> str:
+    """Turn the conversation rows into plain text lines for the prompt."""
+    lines = []
+    for row in rows:
+        speaker = "Sarah" if row["from_phone_number"] == "AGENT" else "User"
+        lines.append(f"{speaker}: {row['message']}")
+    return "\n".join(lines)
 
-# Have the model play a role. 
+
+async def process_incoming_text(phone_number: str, newest_message: str) -> str:
+    """Gather this user's notes and history, ask Sarah for a reply, print it."""
+    # These three reads are independent, so run them at once.
+    user_md, agent_md, history = await asyncio.gather(
+        get_md(phone_number, MdType.USER),
+        get_md(phone_number, MdType.AGENT),
+        get_conversation(phone_number),
+    )
+
+    context = (
+        f"<message_history>\n{_render_history(history)}\n</message_history>\n\n"
+        f"<user_notes>\n{user_md}\n</user_notes>\n\n"
+        f"<agent_notes>\n{agent_md}\n</agent_notes>\n\n"
+        f"The user just texted you:\n{newest_message}"
+    )
+
+    response = await _llm.beta.messages.create(
+        model="claude-fable-5",
+        max_tokens=4096,
+        system=SARAH_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": context}],
+        betas=["server-side-fallback-2026-06-01"],
+        fallbacks=[{"model": "claude-opus-4-8"}],
+    )
+
+    reply = next((b.text for b in response.content if b.type == "text"), "")
+
+    print(reply)
+    return reply
+
+
+# Have the model play a role.
     # my goal is to be agent that helps you accomplish your goals keeps you
         # from psycologically looping and checks in you to make sure you are on the right path. 
         # digital therapist that helps you stop negative thought patterns that you can text at anytime
@@ -92,8 +137,6 @@ async def get_conversation(phone_number: str) -> list[dict]:
 
 # Need to reset the DB and double check this is working
 if __name__ == "__main__":
-    import asyncio
     async def main():
-        print(await get_md("+18323346991", MdType.USER))
-        print(await set_md("+18323346993", MdType.USER, "He's pretty potatoe"))
+        await process_incoming_text("+18323346991", "hey!")
     asyncio.run(main())
