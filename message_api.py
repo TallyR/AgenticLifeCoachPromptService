@@ -1,5 +1,5 @@
 # This is where you can send messages:
-# {phoneNumber: 999-999-9999 | AGENT, text: "Test"}
+# { phoneNumber: 999-999-9999 | AGENT, text: "Test" }
 # should be an async function
 
 import os
