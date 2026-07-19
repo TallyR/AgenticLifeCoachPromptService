@@ -5,6 +5,7 @@
 # Query conversation history, agent note, user note to gather context
 
 import asyncio
+from datetime import datetime, timezone
 from enum import Enum
 
 import anthropic
@@ -86,11 +87,14 @@ async def get_conversation(phone_number: str) -> list[dict]:
 
 
 def _render_history(rows: list[dict]) -> str:
-    """Turn the conversation rows into plain text lines for the prompt."""
+    """Turn the conversation rows into timestamped plain-text lines for the prompt."""
     lines = []
     for row in rows:
         speaker = "Sarah" if row["from_phone_number"] == "AGENT" else "User"
-        lines.append(f"{speaker}: {row['message']}")
+        stamp = datetime.fromtimestamp(row["sent_at"], tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M UTC"
+        )
+        lines.append(f"[{stamp}] {speaker}: {row['message']}")
     return "\n".join(lines)
 
 
@@ -138,5 +142,5 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> str:
 # Need to reset the DB and double check this is working
 if __name__ == "__main__":
     async def main():
-        await process_incoming_text("+18323346991", "hey!")
+        await process_incoming_text("+18323346991", "when was the first time i messaged you? when was the past?")
     asyncio.run(main())
