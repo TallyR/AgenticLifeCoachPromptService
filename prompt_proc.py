@@ -11,7 +11,7 @@ from enum import Enum
 import anthropic
 
 from message_api import TABLE, _get_client
-from sarah_system_prompt import SARAH_SYSTEM_PROMPT
+from faro_system_prompt import FARO_SYSTEM_PROMPT
 
 # Created once and reused (keeps its connection pool warm). Reads
 # ANTHROPIC_API_KEY from the environment (loaded from .env by message_api).
@@ -117,7 +117,7 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> str:
     response = await _llm.beta.messages.create(
         model="claude-fable-5",
         max_tokens=4096,
-        system=SARAH_SYSTEM_PROMPT,
+        system=FARO_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": context}],
         betas=["server-side-fallback-2026-06-01"],
         fallbacks=[{"model": "claude-opus-4-8"}],
@@ -142,5 +142,5 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> str:
 # Need to reset the DB and double check this is working
 if __name__ == "__main__":
     async def main():
-        await process_incoming_text("+18323346991", "when was the first time i messaged you? when was the past?")
+        await process_incoming_text("+18323346991", "who are you?")
     asyncio.run(main())
