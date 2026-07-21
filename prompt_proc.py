@@ -17,6 +17,10 @@ from faro_system_prompt import FARO_SYSTEM_PROMPT
 # ANTHROPIC_API_KEY from the environment (loaded from .env by message_api).
 _llm = anthropic.AsyncAnthropic()
 
+# The md write paths aren't wired up yet. While True, get_md skips the DB
+# entirely and just returns "EMPTY".
+WRITE_PATH_MD_DISABLED = True
+
 
 class MdType(Enum):
     """Which markdown table to read. Each carries its (table, field) pair."""
@@ -31,6 +35,9 @@ class MdType(Enum):
 async def get_md(phone_number: str, md_type: MdType) -> str:
     """Get the md text for a phone number from the USER or AGENT table. If none
     exists, create a row with the md field = "EMPTY" and return that text."""
+    if WRITE_PATH_MD_DISABLED:
+        return "EMPTY"
+
     client = await _get_client()
     response = await (
         client.table(md_type.table)
