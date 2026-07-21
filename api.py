@@ -1,6 +1,8 @@
+import asyncio
+
 from fastapi import FastAPI, Request
 
-from message_api import save_message, send_message
+from message_api import mark_read_and_typing, save_message, send_message
 from prompt_proc import process_incoming_text
 
 app = FastAPI()
@@ -24,11 +26,15 @@ async def blooio_webhook(request: Request):
     from_number = payload.get("sender")
     incoming_text = payload.get("text")
 
-    # 1. Save the message we just received: from the user, to the agent.
-    await save_message(
-        incoming_text,
-        from_phone_number=from_number,
-        to_phone_number="AGENT",
+    # 1. Fire read receipt + typing indicator the moment the webhook lands,
+    #    in parallel with saving the incoming message (from user, to agent).
+    await asyncio.gather(
+        mark_read_and_typing(from_number),
+        save_message(
+            incoming_text,
+            from_phone_number=from_number,
+            to_phone_number="AGENT",
+        ),
     )
 
     # 2. Ask Sarah for a reply, using this user's notes and history.

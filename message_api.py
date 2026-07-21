@@ -46,20 +46,36 @@ async def save_message(
     return response.data[0]
 
 
-async def send_message(phone_number: str, message: str) -> dict:
-    """Send an outbound message via Blooio, mark the chat read, then save it."""
+async def mark_read_and_typing(phone_number: str) -> None:
+    """Fire the read receipt, then the typing indicator, for better UX while
+    the agent thinks. Best-effort: a failure here must never break the reply."""
     chat_id = quote(phone_number, safe="")
     auth = {"Authorization": f"Bearer {os.environ['BLOOIO_API_KEY']}"}
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"https://api.blooio.com/v2/api/chats/{chat_id}/read",
+                headers=auth,
+            )
+            await client.post(
+                f"https://api.blooio.com/v2/api/chats/{chat_id}/typing",
+                headers=auth,
+            )
+    except httpx.HTTPError as e:
+        print(f"read/typing failed (ignoring): {e}")
+
+
+async def send_message(phone_number: str, message: str) -> dict:
+    """Send an outbound message via Blooio; on success, save it to the DB."""
+    chat_id = quote(phone_number, safe="")
     async with httpx.AsyncClient() as client:
         res = await client.post(
             f"https://api.blooio.com/v2/api/chats/{chat_id}/messages",
-            headers={**auth, "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {os.environ['BLOOIO_API_KEY']}",
+                "Content-Type": "application/json",
+            },
             json={"text": message},
-        )
-        # fire-and-forget read receipt; don't let it break a successful send
-        await client.post(
-            f"https://api.blooio.com/v2/api/chats/{chat_id}/read",
-            headers=auth,
         )
     res.raise_for_status()
     await save_message(message, from_phone_number="AGENT", to_phone_number=phone_number)
