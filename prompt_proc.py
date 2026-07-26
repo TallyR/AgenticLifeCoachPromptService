@@ -10,7 +10,7 @@ from enum import Enum
 
 import anthropic
 
-from message_api import TABLE, _get_client
+from message_api import TABLE, _get_client, send_contact_greeting
 from faro_system_prompt import FARO_SYSTEM_PROMPT
 
 # Created once and reused (keeps its connection pool warm). Reads
@@ -154,5 +154,9 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
 # Need to reset the DB and double check this is working
 if __name__ == "__main__":
     async def main():
-        await process_incoming_text("+18323346991", "who are you?")
+        # await process_incoming_text("+18323346991", "who are you?")
+        await send_contact_greeting(
+            "+18323346991",
+            "oh, hey! here is my contact card, please save it so you don't loose track of me!",
+        )
     asyncio.run(main())
