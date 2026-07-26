@@ -12,6 +12,9 @@ from supabase import AsyncClient, create_async_client
 load_dotenv()
 
 TABLE = "MessageTable"
+# The final URL after redirects — justtextfaro.com 308s to www; attachment
+# fetchers don't always follow redirects, so link the file directly.
+FARO_VCF_URL = "https://www.justtextfaro.com/faro.vcf"
 
 _client: AsyncClient | None = None
 
@@ -79,4 +82,26 @@ async def send_message(phone_number: str, message: str) -> dict:
         )
     res.raise_for_status()
     await save_message(message, from_phone_number="AGENT", to_phone_number=phone_number)
+    return res.json()
+
+
+async def send_contact_greeting(phone_number: str, message: str) -> dict:
+    """Send a greeting with Faro's contact card (.vcf) attached; on success,
+    save it to the DB with the attachment noted in the message text."""
+    chat_id = quote(phone_number, safe="")
+    async with httpx.AsyncClient() as client:
+        res = await client.post(
+            f"https://api.blooio.com/v2/api/chats/{chat_id}/messages",
+            headers={
+                "Authorization": f"Bearer {os.environ['BLOOIO_API_KEY']}",
+                "Content-Type": "application/json",
+            },
+            json={"text": message, "attachments": [FARO_VCF_URL]},
+        )
+    res.raise_for_status()
+    await save_message(
+        f"{message}\nATTACHMENT: ({FARO_VCF_URL})",
+        from_phone_number="AGENT",
+        to_phone_number=phone_number,
+    )
     return res.json()

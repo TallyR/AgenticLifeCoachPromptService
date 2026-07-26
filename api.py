@@ -2,10 +2,20 @@ import asyncio
 
 from fastapi import FastAPI, Request
 
-from message_api import mark_read_and_typing, save_message, send_message
+from message_api import (
+    mark_read_and_typing,
+    save_message,
+    send_contact_greeting,
+    send_message,
+)
 from prompt_proc import process_incoming_text
 
 app = FastAPI()
+
+FIRST_CONTACT_GREETING = (
+    "oh, also, here is my contact card you should save in order to make sure "
+    "you can find me again :)"
+)
 
 @app.get("/")
 def read_root():
@@ -37,10 +47,17 @@ async def blooio_webhook(request: Request):
         ),
     )
 
-    # 2. Ask Sarah for a reply, using this user's notes and history.
-    reply = await process_incoming_text(from_number, incoming_text)
+    # 2. Ask Faro for a reply, using this user's notes and history.
+    reply, is_first_contact = await process_incoming_text(from_number, incoming_text)
 
     # 3. Send the reply back to the number it came from.
     #    (send_message also saves the outbound message to the DB.)
     await send_message(from_number, reply)
+
+    # 4. Brand-new user: follow the greeting with Faro's contact card, with a
+    #    fresh typing indicator so it reads like a second text being typed.
+    if is_first_contact:
+        await mark_read_and_typing(from_number)
+        await send_contact_greeting(from_number, FIRST_CONTACT_GREETING)
+
     return {"ok": True}

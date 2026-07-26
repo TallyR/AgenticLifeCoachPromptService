@@ -105,14 +105,19 @@ def _render_history(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-async def process_incoming_text(phone_number: str, newest_message: str) -> str:
-    """Gather this user's notes and history, ask Sarah for a reply, print it."""
+async def process_incoming_text(phone_number: str, newest_message: str) -> tuple[str, bool]:
+    """Gather this user's notes and history, ask Faro for a reply, print it.
+    Returns (reply, is_first_contact)."""
     # These three reads are independent, so run them at once.
     user_md, agent_md, history = await asyncio.gather(
         get_md(phone_number, MdType.USER),
         get_md(phone_number, MdType.AGENT),
         get_conversation(phone_number),
     )
+
+    # The webhook saves the incoming message before calling us, so a brand-new
+    # user shows up here with exactly that one row in their history.
+    is_first_contact = len(history) == 1
 
     context = (
         f"<message_history>\n{_render_history(history)}\n</message_history>\n\n"
@@ -133,7 +138,7 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> str:
     reply = next((b.text for b in response.content if b.type == "text"), "")
 
     print(reply)
-    return reply
+    return reply, is_first_contact
 
 
 # Have the model play a role.
