@@ -198,8 +198,14 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
 if __name__ == "__main__":
     async def main():
         # await process_incoming_text("+18323346991", "who are you?")
-        await send_contact_greeting(
-            "+18323346991",
-            "oh, hey! here is my contact card, please save it so you don't loose track of me!",
-        )
+        number = "+18323346991"
+        if await should_send_contact_message(number):
+            await send_contact_greeting(
+                number,
+                "oh, hey! here is my contact card, please save it so you don't loose track of me!",
+            )
+            await mark_contact_message_sent(number)
+            print(f"contact card sent to {number}, flag flipped to true")
+        else:
+            print(f"{number} already got the contact card, skipping")
     asyncio.run(main())
