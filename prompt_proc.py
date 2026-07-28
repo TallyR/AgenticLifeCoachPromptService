@@ -77,6 +77,45 @@ async def set_md(phone_number: str, md_type: MdType, text: str) -> str:
     return inserted.data[0][md_type.field]
 
 
+async def should_send_contact_message(phone_number: str) -> bool:
+    """True if this number hasn't been sent our contact card yet. Creates the
+    UserMdTable row (user_md EMPTY, user_sent_contact_message false) for
+    brand-new numbers."""
+    client = await _get_client()
+    response = await (
+        client.table(MdType.USER.table)
+        .select("user_sent_contact_message")
+        .eq("phone_number", phone_number)
+        .execute()
+    )
+    if response.data:
+        return not response.data[0]["user_sent_contact_message"]
+
+    await (
+        client.table(MdType.USER.table)
+        .insert(
+            {
+                "phone_number": phone_number,
+                "user_md": "EMPTY",
+                "user_sent_contact_message": False,
+            }
+        )
+        .execute()
+    )
+    return True
+
+
+async def mark_contact_message_sent(phone_number: str) -> None:
+    """Flip user_sent_contact_message to true once the card has gone out."""
+    client = await _get_client()
+    await (
+        client.table(MdType.USER.table)
+        .update({"user_sent_contact_message": True})
+        .eq("phone_number", phone_number)
+        .execute()
+    )
+
+
 async def get_conversation(phone_number: str) -> list[dict]:
     """Return every message to or from `phone_number`, oldest first (by sent_at)."""
     client = await _get_client()
@@ -107,17 +146,21 @@ def _render_history(rows: list[dict]) -> str:
 
 async def process_incoming_text(phone_number: str, newest_message: str) -> tuple[str, bool]:
     """Gather this user's notes and history, ask Faro for a reply, print it.
-    Returns (reply, is_first_contact)."""
-    # These three reads are independent, so run them at once.
-    user_md, agent_md, history = await asyncio.gather(
+    Returns (reply, send_contact_card)."""
+    # ############################ BIG ASS WARNING ############################
+    # should_send_contact_message is only safe inside this gather while
+    # WRITE_PATH_MD_DISABLED is True (get_md never touches the DB). The moment
+    # you re-enable the md write path, get_md(USER) and
+    # should_send_contact_message will RACE to insert the UserMdTable row for a
+    # brand-new number and can double-insert. At that point, pull
+    # should_send_contact_message OUT of this gather and await it BEFORE.
+    # #########################################################################
+    user_md, agent_md, history, send_contact_card = await asyncio.gather(
         get_md(phone_number, MdType.USER),
         get_md(phone_number, MdType.AGENT),
         get_conversation(phone_number),
+        should_send_contact_message(phone_number),
     )
-
-    # The webhook saves the incoming message before calling us, so a brand-new
-    # user shows up here with exactly that one row in their history.
-    is_first_contact = len(history) == 1
 
     context = (
         f"<message_history>\n{_render_history(history)}\n</message_history>\n\n"
@@ -138,7 +181,7 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
     reply = next((b.text for b in response.content if b.type == "text"), "")
 
     print(reply)
-    return reply, is_first_contact
+    return reply, send_contact_card
 
 
 # Have the model play a role.
