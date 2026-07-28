@@ -202,7 +202,7 @@ if __name__ == "__main__":
         if await should_send_contact_message(number):
             await send_contact_greeting(
                 number,
-                "oh, hey! here is my contact card, please save it so you don't loose track of me!",
+                "oh, also, here is my contact card you should save in order to make sure you can find me again :)",
             )
             await mark_contact_message_sent(number)
             print(f"contact card sent to {number}, flag flipped to true")
