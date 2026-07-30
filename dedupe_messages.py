@@ -10,7 +10,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-DEDUP_TTL_SECONDS = 100
+DEDUP_TTL_SECONDS = 120
 DEDUP_DB_PATH = Path(__file__).parent / "dedup.sqlite3"
 
 
@@ -28,7 +28,7 @@ def _is_duplicate_sync(number: str, message: str) -> bool:
             " PRIMARY KEY (number, message))"
         )
         # Prune on every request (keeps the table tiny), then try to claim
-        # the key. Both run in one transaction; SQLite serializes writers
+        # the key. All in one transaction; SQLite serializes writers
         # across processes, so INSERT OR IGNORE is our atomic "NX".
         conn.execute(
             "DELETE FROM dedup WHERE seen_at < ?",
@@ -38,14 +38,22 @@ def _is_duplicate_sync(number: str, message: str) -> bool:
             "INSERT OR IGNORE INTO dedup (number, message, seen_at) VALUES (?, ?, ?)",
             (number, message, now),
         )
-        # 1 row inserted -> first sighting; 0 -> key already there (duplicate).
-        # An ignored insert leaves seen_at untouched: fixed window.
-        return cur.rowcount == 0
+        if cur.rowcount == 1:
+            return False  # row inserted -> first sighting
+
+        # Key already there -> duplicate. Sliding window: restart its clock,
+        # so the key stays blocked until DEDUP_TTL_SECONDS of silence.
+        conn.execute(
+            "UPDATE dedup SET seen_at = ? WHERE number = ? AND message = ?",
+            (now, number, message),
+        )
+        return True
 
 
 async def is_duplicate(number: str, message: str) -> bool:
     """True if this exact (number, message) was seen within the TTL.
-    First sighting records it; duplicates do NOT extend the window.
+    Sliding window: every duplicate restarts the clock, so the key stays
+    blocked until a full TTL passes with no repeats.
     Runs in the threadpool so SQLite's file I/O never blocks the event
     loop. Fails open if the DB is somehow unusable."""
     try:
