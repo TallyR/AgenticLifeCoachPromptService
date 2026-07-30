@@ -2,6 +2,7 @@ import asyncio
 
 from fastapi import FastAPI, Request
 
+from dedupe_messages import is_duplicate
 from message_api import (
     mark_read_and_typing,
     save_message,
@@ -35,6 +36,12 @@ async def blooio_webhook(request: Request):
 
     from_number = payload.get("sender")
     incoming_text = payload.get("text")
+
+    # 0. Drop duplicate deliveries (Blooio retries). Still return ok —
+    #    anything else makes Blooio keep retrying forever.
+    if await is_duplicate(from_number, incoming_text):
+        print(f"REPEAT DETECTED DROPPING: {from_number}: {incoming_text}")
+        return {"ok": True}
 
     # 1. Fire read receipt + typing indicator the moment the webhook lands,
     #    in parallel with saving the incoming message (from user, to agent).
