@@ -10,7 +10,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-DEDUP_TTL_SECONDS = 10
+DEDUP_TTL_SECONDS = 100
 DEDUP_DB_PATH = Path(__file__).parent / "dedup.sqlite3"
 
 
