@@ -1,5 +1,6 @@
 import asyncio
 
+import httpx
 from fastapi import FastAPI, Request
 
 from dedupe_messages import is_duplicate
@@ -22,6 +23,30 @@ FIRST_CONTACT_GREETING = (
 # guard for the agent loop; shared by the debug harnesses and, once tools are
 # wired into production, process_incoming_text.
 AGENT_TURN_LIMIT = 10
+
+# Blooio sends flake sometimes: retry up to 3 attempts, 6s apart.
+SEND_RETRY_ATTEMPTS = 3
+SEND_RETRY_DELAY_SECONDS = 6
+
+
+async def _send_with_retries(phone_number: str, message: str) -> None:
+    """send_message, retried on DELIVERY failures only (httpx errors: network
+    trouble or a Blooio 4xx/5xx). A failure in the DB save that runs after a
+    successful send is NOT retried — retrying that would text the user the
+    same message twice. Gives up loudly after the last attempt so the webhook
+    still returns ok (a raise would just make Blooio redeliver, which dedup
+    drops anyway)."""
+    for attempt in range(1, SEND_RETRY_ATTEMPTS + 1):
+        try:
+            await send_message(phone_number, message)
+            return
+        except httpx.HTTPError as e:
+            print(f"send attempt {attempt}/{SEND_RETRY_ATTEMPTS} failed: {e}")
+            if attempt < SEND_RETRY_ATTEMPTS:
+                # asyncio.sleep, never time.sleep: parks only this request,
+                # the event loop keeps serving everyone else for the 6s.
+                await asyncio.sleep(SEND_RETRY_DELAY_SECONDS)
+    print(f"GIVING UP: could not send to {phone_number} after {SEND_RETRY_ATTEMPTS} attempts")
 
 @app.get("/")
 def read_root():
@@ -62,9 +87,9 @@ async def blooio_webhook(request: Request):
     # 2. Ask Faro for a reply, using this user's notes and history.
     reply, send_contact_card = await process_incoming_text(from_number, incoming_text)
 
-    # 3. Send the reply back to the number it came from.
+    # 3. Send the reply back to the number it came from, with retries.
     #    (send_message also saves the outbound message to the DB.)
-    await send_message(from_number, reply)
+    await _send_with_retries(from_number, reply)
 
     # 4. If this user hasn't gotten Faro's contact card yet, follow up with it
     #    (fresh typing indicator so it reads like a second text being typed),
