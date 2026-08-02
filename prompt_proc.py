@@ -10,8 +10,10 @@ from enum import Enum
 
 import anthropic
 
-from message_api import TABLE, _get_client, send_contact_greeting
+from faro_events_api import EVENT_TABLE
+from faro_reminders_api import REMINDER_TABLE
 from faro_system_prompt import FARO_SYSTEM_PROMPT
+from message_api import TABLE, _get_client, send_contact_greeting
 
 # Created once and reused (keeps its connection pool warm). Reads
 # ANTHROPIC_API_KEY from the environment (loaded from .env by message_api).
@@ -132,6 +134,48 @@ async def get_conversation(phone_number: str) -> list[dict]:
     return response.data
 
 
+async def get_active_reminders_and_events(phone_number: str) -> str:
+    """All reminders and events for this number, formatted for the prompt.
+
+    Includes the row ids on purpose: they're what Faro passes to the delete
+    tool when the user wants to remove or change an entry (change = delete +
+    recreate, since there is no edit tool). Returns "NONE" when empty.
+    """
+    client = await _get_client()
+    reminders, events = await asyncio.gather(
+        client.table(REMINDER_TABLE)
+        .select("*")
+        .eq("user_number", phone_number)
+        .execute(),
+        client.table(EVENT_TABLE)
+        .select("*")
+        .eq("user_number", phone_number)
+        .execute(),
+    )
+
+    lines = []
+    for r in reminders.data:
+        occurrences = (
+            "repeats forever"
+            if r["number_of_occurrences"] == -1
+            else f"{r['number_of_occurrences']} occurrences left"
+        )
+        lines.append(
+            f"REMINDER id={r['id']}: every {', '.join(r['days_of_week'])} at "
+            f"{r['hour_to_be_triggered']}:{r['minute_to_be_triggered']:02d}:"
+            f"{r['second_to_be_triggered']:02d} {r['am_or_pm']} "
+            f"({r['timezone']}), {occurrences} — \"{r['note']}\""
+        )
+    for e in events.data:
+        lines.append(
+            f"EVENT id={e['id']}: {e['year']}-{e['month']:02d}-{e['day']:02d} "
+            f"at {e['hour']}:{e['minute']:02d}:{e['second']:02d} "
+            f"{e['am_or_pm']} ({e['timezone']}) — \"{e['note']}\""
+        )
+
+    return "\n".join(lines) if lines else "NONE"
+
+
 def _render_history(rows: list[dict]) -> str:
     """Turn the conversation rows into timestamped plain-text lines for the prompt."""
     lines = []
@@ -155,17 +199,19 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
     # brand-new number and can double-insert. At that point, pull
     # should_send_contact_message OUT of this gather and await it BEFORE.
     # #########################################################################
-    user_md, agent_md, history, send_contact_card = await asyncio.gather(
+    user_md, agent_md, history, send_contact_card, active_items = await asyncio.gather(
         get_md(phone_number, MdType.USER),
         get_md(phone_number, MdType.AGENT),
         get_conversation(phone_number),
         should_send_contact_message(phone_number),
+        get_active_reminders_and_events(phone_number),
     )
 
     context = (
         f"<message_history>\n{_render_history(history)}\n</message_history>\n\n"
         f"<user_notes>\n{user_md}\n</user_notes>\n\n"
         f"<agent_notes>\n{agent_md}\n</agent_notes>\n\n"
+        f"<active_reminders_and_events>\n{active_items}\n</active_reminders_and_events>\n\n"
         f"The user just texted you:\n{newest_message}"
     )
 

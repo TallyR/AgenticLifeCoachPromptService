@@ -161,6 +161,7 @@ def get_create_reminder_tool_definition() -> dict:
 if __name__ == "__main__":
     import json
 
+    from api import AGENT_TURN_LIMIT
     from faro_system_prompt import FARO_SYSTEM_PROMPT
     from prompt_proc import MdType, _llm, _render_history, get_conversation, get_md
 
@@ -169,7 +170,7 @@ if __name__ == "__main__":
     async def _run_agent_turn(messages: list, tools: list) -> None:
         """One Faro turn: call the model, execute any tool calls, feed the
         results back, repeat until it answers in plain text."""
-        for _ in range(5):
+        for _ in range(AGENT_TURN_LIMIT):
             response = await _llm.beta.messages.create(
                 model="claude-fable-5",
                 max_tokens=4096,
@@ -209,7 +210,7 @@ if __name__ == "__main__":
                 )
             messages.append({"role": "user", "content": tool_results})
 
-        print("agent loop hit its 5-round cap without finishing")
+        print(f"agent loop hit its {AGENT_TURN_LIMIT}-round cap without finishing")
 
     async def _chat() -> None:
         """Interactive verification harness: text Faro from the terminal.

@@ -18,6 +18,11 @@ FIRST_CONTACT_GREETING = (
     "you can find me again :)"
 )
 
+# Max model rounds per agent turn (call -> tools -> call -> ...). The runaway
+# guard for the agent loop; shared by the debug harnesses and, once tools are
+# wired into production, process_incoming_text.
+AGENT_TURN_LIMIT = 10
+
 @app.get("/")
 def read_root():
     return {"message": {"name": "John", "age": 30}}

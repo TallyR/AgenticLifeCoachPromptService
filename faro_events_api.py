@@ -218,8 +218,25 @@ if __name__ == "__main__":
     import asyncio
     import json
 
+    from api import AGENT_TURN_LIMIT
+    from faro_delete_tool import (
+        DeleteType,
+        delete_reminder_or_event,
+        get_delete_reminder_or_event_tool_definition,
+    )
+    from faro_reminders_api import (
+        create_reminder,
+        get_create_reminder_tool_definition,
+    )
     from faro_system_prompt import FARO_SYSTEM_PROMPT
-    from prompt_proc import MdType, _llm, _render_history, get_conversation, get_md
+    from prompt_proc import (
+        MdType,
+        _llm,
+        _render_history,
+        get_active_reminders_and_events,
+        get_conversation,
+        get_md,
+    )
 
     TEST_NUMBER = "+18323346991"
 
@@ -230,12 +247,24 @@ if __name__ == "__main__":
         if name == "create_event":
             row = await create_event(**tool_input, user_number=TEST_NUMBER)
             return json.dumps(row)
+        if name == "create_reminder":
+            row = await create_reminder(**tool_input, user_number=TEST_NUMBER)
+            return json.dumps(row)
+        if name == "delete_reminder_or_event":
+            deleted = await delete_reminder_or_event(
+                tool_input["row_id"], DeleteType[tool_input["delete_type"]]
+            )
+            return json.dumps(
+                {"deleted": deleted}
+                if deleted
+                else {"deleted": False, "reason": "no row with that id"}
+            )
         raise ValueError(f"unknown tool: {name}")
 
     async def _run_agent_turn(messages: list, tools: list) -> None:
         """One Faro turn: call the model, execute any tool calls, feed the
         results back, repeat until it answers in plain text."""
-        for _ in range(8):
+        for _ in range(AGENT_TURN_LIMIT):
             response = await _llm.beta.messages.create(
                 model="claude-fable-5",
                 max_tokens=4096,
@@ -287,35 +316,43 @@ if __name__ == "__main__":
                     )
             messages.append({"role": "user", "content": tool_results})
 
-        print("agent loop hit its 8-round cap without finishing")
+        print(f"agent loop hit its {AGENT_TURN_LIMIT}-round cap without finishing")
 
     async def _chat() -> None:
         """Interactive verification harness: text Faro from the terminal with
-        the current-time and one-off event tools (reminders are tested in
-        faro_reminders_api.py). Nothing is texted or saved to MessageTable;
-        tool calls DO write real event rows.
+        the FULL toolbox — current time, one-off events, recurring reminders,
+        and delete — plus the live schedule context block, same as production
+        will have. Nothing is texted or saved to MessageTable; tool calls DO
+        write and delete real reminder/event rows.
 
         One asyncio.run for the whole session on purpose: the shared clients
         bind to the first event loop, so per-message loops would break them.
         """
-        user_md, agent_md, history = await asyncio.gather(
+        user_md, agent_md, history, active_items = await asyncio.gather(
             get_md(TEST_NUMBER, MdType.USER),
             get_md(TEST_NUMBER, MdType.AGENT),
             get_conversation(TEST_NUMBER),
+            get_active_reminders_and_events(TEST_NUMBER),
         )
         preamble = (
             f"<message_history>\n{_render_history(history)}\n</message_history>\n\n"
             f"<user_notes>\n{user_md}\n</user_notes>\n\n"
             f"<agent_notes>\n{agent_md}\n</agent_notes>\n\n"
+            f"<active_reminders_and_events>\n{active_items}\n</active_reminders_and_events>\n\n"
             f"The user just texted you:\n"
         )
         messages: list = []
         tools = [
             get_current_date_and_time_tool_definition(),
             get_create_event_tool_definition(),
+            get_create_reminder_tool_definition(),
+            get_delete_reminder_or_event_tool_definition(),
         ]
 
-        print("texting Faro (time + event tools) — empty message or Ctrl+C to quit")
+        print(
+            "texting Faro (time + event + reminder + delete tools, live schedule "
+            "loaded) — empty message or Ctrl+C to quit"
+        )
         while True:
             try:
                 incoming = input("\nYOU: ").strip()
