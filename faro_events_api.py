@@ -213,7 +213,7 @@ def get_create_event_tool_definition() -> dict:
     }
 
 
-#### FOR DEBUGGING PURPOSES ####
+#### FOR DEBUGGING PURPOSES: FULL HARNESS HERE ####
 if __name__ == "__main__":
     import asyncio
     import json
