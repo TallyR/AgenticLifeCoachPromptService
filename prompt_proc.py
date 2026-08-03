@@ -5,13 +5,29 @@
 # Query conversation history, agent note, user note to gather context
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from enum import Enum
 
 import anthropic
 
-from faro_events_api import EVENT_TABLE
-from faro_reminders_api import REMINDER_TABLE
+from faro_delete_tool import (
+    DeleteType,
+    delete_reminder_or_event,
+    get_delete_reminder_or_event_tool_definition,
+)
+from faro_events_api import (
+    EVENT_TABLE,
+    create_event,
+    get_create_event_tool_definition,
+    get_current_date_and_time_from_timezone,
+    get_current_date_and_time_tool_definition,
+)
+from faro_reminders_api import (
+    REMINDER_TABLE,
+    create_reminder,
+    get_create_reminder_tool_definition,
+)
 from faro_system_prompt import FARO_SYSTEM_PROMPT
 from message_api import TABLE, _get_client, send_contact_greeting
 
@@ -22,6 +38,10 @@ _llm = anthropic.AsyncAnthropic()
 # The md write paths aren't wired up yet. While True, get_md skips the DB
 # entirely and just returns "EMPTY".
 WRITE_PATH_MD_DISABLED = True
+
+# Max model rounds per agent turn (call -> tools -> call -> ...). Lives here,
+# not in api.py: api imports this module, so importing back would be circular.
+AGENT_TURN_LIMIT = 10
 
 
 class MdType(Enum):
@@ -188,8 +208,35 @@ def _render_history(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def _execute_tool(name: str, tool_input: dict, phone_number: str) -> str:
+    """Dispatch one tool call by name; returns the result as JSON text.
+    phone_number is injected here — the model never controls it."""
+    if name == "get_current_date_and_time_from_timezone":
+        return json.dumps(get_current_date_and_time_from_timezone(**tool_input))
+    if name == "create_event":
+        row = await create_event(**tool_input, user_number=phone_number)
+        return json.dumps(row)
+    if name == "create_reminder":
+        row = await create_reminder(**tool_input, user_number=phone_number)
+        return json.dumps(row)
+    if name == "delete_reminder_or_event":
+        deleted = await delete_reminder_or_event(
+            tool_input["row_id"], DeleteType[tool_input["delete_type"]]
+        )
+        return json.dumps(
+            {"deleted": deleted}
+            if deleted
+            else {"deleted": False, "reason": "no row with that id"}
+        )
+    raise ValueError(f"unknown tool: {name}")
+
+
 async def process_incoming_text(phone_number: str, newest_message: str) -> tuple[str, bool]:
-    """Gather this user's notes and history, ask Faro for a reply, print it.
+    """Gather this user's context, then run the agent loop: Faro can call its
+    tools (current time, events, reminders, delete), each result is fed back
+    into the in-turn conversation, and the loop ends when it answers in plain
+    text. Tool calls are printed but never saved to Supabase — only the
+    incoming text and the final reply reach MessageTable (saved by api.py).
     Returns (reply, send_contact_card)."""
     # ############################ BIG ASS WARNING ############################
     # should_send_contact_message is only safe inside this gather while
@@ -215,18 +262,68 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
         f"The user just texted you:\n{newest_message}"
     )
 
-    response = await _llm.beta.messages.create(
-        model="claude-fable-5",
-        max_tokens=4096,
-        system=FARO_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": context}],
-        betas=["server-side-fallback-2026-06-01"],
-        fallbacks=[{"model": "claude-opus-4-8"}],
-    )
+    messages = [{"role": "user", "content": context}]
+    tools = [
+        get_current_date_and_time_tool_definition(),
+        get_create_event_tool_definition(),
+        get_create_reminder_tool_definition(),
+        get_delete_reminder_or_event_tool_definition(),
+    ]
 
-    reply = next((b.text for b in response.content if b.type == "text"), "")
+    for _ in range(AGENT_TURN_LIMIT):
+        response = await _llm.beta.messages.create(
+            model="claude-fable-5",
+            max_tokens=4096,
+            system=FARO_SYSTEM_PROMPT,
+            messages=messages,
+            tools=tools,
+            betas=["server-side-fallback-2026-06-01"],
+            fallbacks=[{"model": "claude-opus-4-8"}],
+        )
 
-    print(reply)
+        # Append the assistant turn verbatim — this keeps the thinking and
+        # tool_use blocks intact, which the API requires on replay.
+        messages.append({"role": "assistant", "content": response.content})
+
+        if response.stop_reason != "tool_use":
+            reply = next((b.text for b in response.content if b.type == "text"), "")
+            print(reply)
+            return reply, send_contact_card
+
+        # Execute every tool call in the turn, then send all results back in
+        # a single user message (matched by tool_use_id). These live only in
+        # this in-turn conversation: printed, never saved to Supabase.
+        tool_results = []
+        for block in response.content:
+            if block.type != "tool_use":
+                continue
+            print(f"[tool call] {block.name}({json.dumps(block.input)})")
+            try:
+                content = await _execute_tool(block.name, block.input, phone_number)
+                print(f"[tool result] {content}")
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": content,
+                    }
+                )
+            except Exception as e:
+                print(f"[tool error] {e}")
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": str(e),
+                        "is_error": True,
+                    }
+                )
+        messages.append({"role": "user", "content": tool_results})
+
+    # Cap hit: never send the user an empty text. Log loudly for Render logs
+    # and hand back something human.
+    print(f"AGENT LOOP HIT ITS {AGENT_TURN_LIMIT}-ROUND CAP WITHOUT FINISHING")
+    reply = "ugh, something glitched on my end. say that one more time?"
     return reply, send_contact_card
 
 

@@ -161,9 +161,15 @@ def get_create_reminder_tool_definition() -> dict:
 if __name__ == "__main__":
     import json
 
-    from api import AGENT_TURN_LIMIT
     from faro_system_prompt import FARO_SYSTEM_PROMPT
-    from prompt_proc import MdType, _llm, _render_history, get_conversation, get_md
+    from prompt_proc import (
+        AGENT_TURN_LIMIT,
+        MdType,
+        _llm,
+        _render_history,
+        get_conversation,
+        get_md,
+    )
 
     TEST_NUMBER = "+18323346991"
 

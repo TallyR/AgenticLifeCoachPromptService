@@ -81,7 +81,17 @@ async def send_message(phone_number: str, message: str) -> dict:
             json={"text": message},
         )
     res.raise_for_status()
-    await save_message(message, from_phone_number="AGENT", to_phone_number=phone_number)
+    try:
+        await save_message(
+            message, from_phone_number="AGENT", to_phone_number=phone_number
+        )
+    except Exception as e:
+        # The text already went out — a failed save is a history gap, not a
+        # failed send. Print everything needed to backfill the row by hand.
+        print(
+            f"SAVE FAILED for sent message (AGENT -> {phone_number}): {e}\n"
+            f"  message was: {message}"
+        )
     return res.json()
 
 

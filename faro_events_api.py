@@ -218,7 +218,6 @@ if __name__ == "__main__":
     import asyncio
     import json
 
-    from api import AGENT_TURN_LIMIT
     from faro_delete_tool import (
         DeleteType,
         delete_reminder_or_event,
@@ -230,6 +229,7 @@ if __name__ == "__main__":
     )
     from faro_system_prompt import FARO_SYSTEM_PROMPT
     from prompt_proc import (
+        AGENT_TURN_LIMIT,
         MdType,
         _llm,
         _render_history,
