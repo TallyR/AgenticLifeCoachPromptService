@@ -20,7 +20,7 @@ from message_api import FARO_VCF_URL, mark_read_and_typing, save_message
 from prompt_proc import mark_contact_message_sent, process_incoming_text
 
 TEST_NUMBER = "+18323346991"
-DRY_RUN = False
+DRY_RUN = True
 
 
 async def main() -> None:
@@ -67,6 +67,8 @@ async def main() -> None:
         reply, send_contact_card = await process_incoming_text(
             TEST_NUMBER, incoming
         )
+
+        print(f"Reply: {reply}")
 
         # Dry run stops here: reply printed above by process_incoming_text,
         # nothing sent, nothing saved.

@@ -43,6 +43,12 @@ WRITE_PATH_MD_DISABLED = True
 # not in api.py: api imports this module, so importing back would be circular.
 AGENT_TURN_LIMIT = 10
 
+# Output token ceiling per model call. It's a ceiling, not a target — you only
+# pay for what's generated — so it's set generous. A big burst can emit ~20
+# create_event tool calls plus Fable's always-on thinking in one response;
+# 4096 risked truncating that mid-list. 16000 is the SDK's non-streaming default.
+OUTPUT_MAX_TOKENS = 16000
+
 
 class MdType(Enum):
     """Which markdown table to read. Each carries its (table, field) pair."""
@@ -273,7 +279,7 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
     for _ in range(AGENT_TURN_LIMIT):
         response = await _llm.beta.messages.create(
             model="claude-fable-5",
-            max_tokens=4096,
+            max_tokens=OUTPUT_MAX_TOKENS,
             system=FARO_SYSTEM_PROMPT,
             messages=messages,
             tools=tools,

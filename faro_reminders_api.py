@@ -164,6 +164,7 @@ if __name__ == "__main__":
     from faro_system_prompt import FARO_SYSTEM_PROMPT
     from prompt_proc import (
         AGENT_TURN_LIMIT,
+        OUTPUT_MAX_TOKENS,
         MdType,
         _llm,
         _render_history,
@@ -179,7 +180,7 @@ if __name__ == "__main__":
         for _ in range(AGENT_TURN_LIMIT):
             response = await _llm.beta.messages.create(
                 model="claude-fable-5",
-                max_tokens=4096,
+                max_tokens=OUTPUT_MAX_TOKENS,
                 system=FARO_SYSTEM_PROMPT,
                 messages=messages,
                 tools=tools,
