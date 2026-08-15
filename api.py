@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 
 import httpx
 from fastapi import FastAPI, Request
@@ -31,9 +32,13 @@ async def _send_with_retries(phone_number: str, message: str) -> None:
     same message twice. Gives up loudly after the last attempt so the webhook
     still returns ok (a raise would just make Blooio redeliver, which dedup
     drops anyway)."""
+    # One key for the whole logical send, reused on every retry: if attempt 1
+    # timed out but actually reached Blooio, attempt 2's replay returns the
+    # original response instead of sending the text a second time.
+    idempotency_key = str(uuid.uuid4())
     for attempt in range(1, SEND_RETRY_ATTEMPTS + 1):
         try:
-            await send_message(phone_number, message)
+            await send_message(phone_number, message, idempotency_key=idempotency_key)
             return
         except httpx.HTTPError as e:
             print(f"send attempt {attempt}/{SEND_RETRY_ATTEMPTS} failed: {e}")

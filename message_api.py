@@ -16,6 +16,10 @@ TABLE = "MessageTable"
 # fetchers don't always follow redirects, so link the file directly.
 FARO_VCF_URL = "https://www.justtextfaro.com/faro.vcf"
 
+# Blooio's send endpoint can be slow to respond; give it room before timing
+# out (httpx defaults to 5s). Applies per phase: connect, read, write, pool.
+BLOOIO_TIMEOUT_SECONDS = 30
+
 _client: AsyncClient | None = None
 
 async def _get_client() -> AsyncClient:
@@ -68,15 +72,29 @@ async def mark_read_and_typing(phone_number: str) -> None:
         print(f"read/typing failed (ignoring): {e}")
 
 
-async def send_message(phone_number: str, message: str) -> dict:
-    """Send an outbound message via Blooio; on success, save it to the DB."""
+async def send_message(
+    phone_number: str, message: str, idempotency_key: str
+) -> dict:
+    """Send an outbound message via Blooio; on success, save it to the DB.
+
+    Prefer calling this through `_send_with_retries` in api.py rather than
+    directly: that wrapper mints the idempotency key, keeps it stable across
+    retries, and handles delivery failures. Call here directly only when you
+    have a reason to skip retries, and generate your own key with
+    `str(uuid.uuid4())`.
+
+    idempotency_key: required, and MUST be the SAME across every retry of a
+    single logical send — so a retry after a timeout can't double-text the
+    user. Blooio replays the original response (200 + original message_id)
+    for a repeated key instead of sending again."""
     chat_id = quote(phone_number, safe="")
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=BLOOIO_TIMEOUT_SECONDS) as client:
         res = await client.post(
             f"https://api.blooio.com/v2/api/chats/{chat_id}/messages",
             headers={
                 "Authorization": f"Bearer {os.environ['BLOOIO_API_KEY']}",
                 "Content-Type": "application/json",
+                "Idempotency-Key": idempotency_key,
             },
             json={"text": message},
         )
