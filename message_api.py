@@ -73,11 +73,14 @@ async def mark_read_and_typing(phone_number: str) -> None:
 
 
 async def send_message(
-    phone_number: str, message: str, idempotency_key: str
+    phone_number: str,
+    message: str,
+    idempotency_key: str,
+    attachments: list[str] | None = None,
 ) -> dict:
     """Send an outbound message via Blooio; on success, save it to the DB.
 
-    Prefer calling this through `_send_with_retries` in api.py rather than
+    Prefer calling this through `_send_with_retries` below rather than
     directly: that wrapper mints the idempotency key, keeps it stable across
     retries, and handles delivery failures. Call here directly only when you
     have a reason to skip retries, and generate your own key with
@@ -86,8 +89,13 @@ async def send_message(
     idempotency_key: required, and MUST be the SAME across every retry of a
     single logical send — so a retry after a timeout can't double-text the
     user. Blooio replays the original response (200 + original message_id)
-    for a repeated key instead of sending again."""
+    for a repeated key instead of sending again.
+    attachments: optional list of file URLs (e.g. a .vcf contact card) to
+    attach. When present, the saved DB message notes them."""
     chat_id = quote(phone_number, safe="")
+    body: dict = {"text": message}
+    if attachments:
+        body["attachments"] = attachments
     async with httpx.AsyncClient(timeout=BLOOIO_TIMEOUT_SECONDS) as client:
         res = await client.post(
             f"https://api.blooio.com/v2/api/chats/{chat_id}/messages",
@@ -96,40 +104,21 @@ async def send_message(
                 "Content-Type": "application/json",
                 "Idempotency-Key": idempotency_key,
             },
-            json={"text": message},
+            json=body,
         )
     res.raise_for_status()
+    saved_message = message
+    if attachments:
+        saved_message = f"{message}\nATTACHMENT: ({', '.join(attachments)})"
     try:
         await save_message(
-            message, from_phone_number="AGENT", to_phone_number=phone_number
+            saved_message, from_phone_number="AGENT", to_phone_number=phone_number
         )
     except Exception as e:
         # The text already went out — a failed save is a history gap, not a
         # failed send. Print everything needed to backfill the row by hand.
         print(
             f"SAVE FAILED for sent message (AGENT -> {phone_number}): {e}\n"
-            f"  message was: {message}"
+            f"  message was: {saved_message}"
         )
-    return res.json()
-
-
-async def send_contact_greeting(phone_number: str, message: str) -> dict:
-    """Send a greeting with Faro's contact card (.vcf) attached; on success,
-    save it to the DB with the attachment noted in the message text."""
-    chat_id = quote(phone_number, safe="")
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            f"https://api.blooio.com/v2/api/chats/{chat_id}/messages",
-            headers={
-                "Authorization": f"Bearer {os.environ['BLOOIO_API_KEY']}",
-                "Content-Type": "application/json",
-            },
-            json={"text": message, "attachments": [FARO_VCF_URL]},
-        )
-    res.raise_for_status()
-    await save_message(
-        f"{message}\nATTACHMENT: ({FARO_VCF_URL})",
-        from_phone_number="AGENT",
-        to_phone_number=phone_number,
-    )
     return res.json()

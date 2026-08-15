@@ -29,7 +29,7 @@ from faro_reminders_api import (
     get_create_reminder_tool_definition,
 )
 from faro_system_prompt import FARO_SYSTEM_PROMPT
-from message_api import TABLE, _get_client, send_contact_greeting
+from message_api import TABLE, _get_client
 
 # Created once and reused (keeps its connection pool warm). Reads
 # ANTHROPIC_API_KEY from the environment (loaded from .env by message_api).
@@ -339,13 +339,19 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
 
 # Need to reset the DB and double check this is working
 if __name__ == "__main__":
+    # Local import: api imports this module, so a top-level `from api` is circular.
+    from api import _send_with_retries
+    from message_api import FARO_VCF_URL
+
     async def main():
         # await process_incoming_text("+18323346991", "who are you?")
         number = "+18323346991"
         if await should_send_contact_message(number):
-            await send_contact_greeting(
+            # contact card = greeting + Faro's .vcf attached (mirrors api.py step 4)
+            await _send_with_retries(
                 number,
                 "oh, also, here is my contact card you should save in order to make sure you can find me again :)",
+                attachments=[FARO_VCF_URL],
             )
             await mark_contact_message_sent(number)
             print(f"contact card sent to {number}, flag flipped to true")
