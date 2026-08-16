@@ -4,6 +4,7 @@ import uuid
 import httpx
 from fastapi import FastAPI, Request
 
+from daily_summaries_api import enable_daily_summaries
 from dedupe_messages import is_duplicate
 from message_api import (
     FARO_VCF_URL,
@@ -82,7 +83,9 @@ async def blooio_webhook(request: Request):
         return {"ok": True}
 
     # 1. Fire read receipt + typing indicator the moment the webhook lands,
-    #    in parallel with saving the incoming message (from user, to agent).
+    #    in parallel with saving the incoming message (from user, to agent)
+    #    and marking the number active for the daily summary (any message in
+    #    re-enables it).
     await asyncio.gather(
         mark_read_and_typing(from_number),
         save_message(
@@ -90,6 +93,7 @@ async def blooio_webhook(request: Request):
             from_phone_number=from_number,
             to_phone_number="AGENT",
         ),
+        enable_daily_summaries(from_number),
     )
 
     # 2. Ask Faro for a reply, using this user's notes and history.
