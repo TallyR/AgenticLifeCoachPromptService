@@ -220,9 +220,10 @@ if __name__ == "__main__":
 
     from faro_delete_tool import (
         DeleteType,
-        delete_reminder_or_event,
-        get_delete_reminder_or_event_tool_definition,
+        delete_entry,
+        get_delete_entry_tool_definition,
     )
+    from faro_nag_tool import create_nag, get_nag_tool_definition
     from faro_reminders_api import (
         create_reminder,
         get_create_reminder_tool_definition,
@@ -234,7 +235,7 @@ if __name__ == "__main__":
         MdType,
         _llm,
         _render_history,
-        get_active_reminders_and_events,
+        get_active_commitments,
         get_conversation,
         get_md,
     )
@@ -251,8 +252,11 @@ if __name__ == "__main__":
         if name == "create_reminder":
             row = await create_reminder(**tool_input, user_number=TEST_NUMBER)
             return json.dumps(row)
-        if name == "delete_reminder_or_event":
-            deleted = await delete_reminder_or_event(
+        if name == "create_nag":
+            row = await create_nag(**tool_input, user_number=TEST_NUMBER)
+            return json.dumps(row)
+        if name == "delete_entry":
+            deleted = await delete_entry(
                 tool_input["row_id"], DeleteType[tool_input["delete_type"]]
             )
             return json.dumps(
@@ -333,13 +337,13 @@ if __name__ == "__main__":
             get_md(TEST_NUMBER, MdType.USER),
             get_md(TEST_NUMBER, MdType.AGENT),
             get_conversation(TEST_NUMBER),
-            get_active_reminders_and_events(TEST_NUMBER),
+            get_active_commitments(TEST_NUMBER),
         )
         preamble = (
             f"<message_history>\n{_render_history(history)}\n</message_history>\n\n"
             f"<user_notes>\n{user_md}\n</user_notes>\n\n"
             f"<agent_notes>\n{agent_md}\n</agent_notes>\n\n"
-            f"<active_reminders_and_events>\n{active_items}\n</active_reminders_and_events>\n\n"
+            f"<active_commitments>\n{active_items}\n</active_commitments>\n\n"
             f"The user just texted you:\n"
         )
         messages: list = []
@@ -347,7 +351,8 @@ if __name__ == "__main__":
             get_current_date_and_time_tool_definition(),
             get_create_event_tool_definition(),
             get_create_reminder_tool_definition(),
-            get_delete_reminder_or_event_tool_definition(),
+            get_nag_tool_definition(),
+            get_delete_entry_tool_definition(),
         ]
 
         print(

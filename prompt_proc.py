@@ -13,9 +13,10 @@ import anthropic
 
 from faro_delete_tool import (
     DeleteType,
-    delete_reminder_or_event,
-    get_delete_reminder_or_event_tool_definition,
+    delete_entry,
+    get_delete_entry_tool_definition,
 )
+from faro_nag_tool import NAG_TABLE, create_nag, get_nag_tool_definition
 from faro_events_api import (
     EVENT_TABLE,
     create_event,
@@ -160,15 +161,17 @@ async def get_conversation(phone_number: str) -> list[dict]:
     return response.data
 
 
-async def get_active_reminders_and_events(phone_number: str) -> str:
-    """All reminders and events for this number, formatted for the prompt.
+async def get_active_commitments(phone_number: str) -> str:
+    """All reminders, events, and standing nags for this number, formatted
+    for the prompt.
 
     Includes the row ids on purpose: they're what Faro passes to the delete
     tool when the user wants to remove or change an entry (change = delete +
-    recreate, since there is no edit tool). Returns "NONE" when empty.
+    recreate, since there is no edit tool), or when a nag is done and gets
+    crossed off. Returns "NONE" when empty.
     """
     client = await _get_client()
-    reminders, events = await asyncio.gather(
+    reminders, events, nags = await asyncio.gather(
         client.table(REMINDER_TABLE)
         .select("*")
         .eq("user_number", phone_number)
@@ -176,6 +179,11 @@ async def get_active_reminders_and_events(phone_number: str) -> str:
         client.table(EVENT_TABLE)
         .select("*")
         .eq("user_number", phone_number)
+        .execute(),
+        # NB: this table's column is user_phone_number, not user_number.
+        client.table(NAG_TABLE)
+        .select("*")
+        .eq("user_phone_number", phone_number)
         .execute(),
     )
 
@@ -198,6 +206,8 @@ async def get_active_reminders_and_events(phone_number: str) -> str:
             f"at {e['hour']}:{e['minute']:02d}:{e['second']:02d} "
             f"{e['am_or_pm']} ({e['timezone']}) — \"{e['note']}\""
         )
+    for n in nags.data:
+        lines.append(f"NAG id={n['id']}: \"{n['nag_note']}\"")
 
     return "\n".join(lines) if lines else "NONE"
 
@@ -225,8 +235,11 @@ async def _execute_tool(name: str, tool_input: dict, phone_number: str) -> str:
     if name == "create_reminder":
         row = await create_reminder(**tool_input, user_number=phone_number)
         return json.dumps(row)
-    if name == "delete_reminder_or_event":
-        deleted = await delete_reminder_or_event(
+    if name == "create_nag":
+        row = await create_nag(**tool_input, user_number=phone_number)
+        return json.dumps(row)
+    if name == "delete_entry":
+        deleted = await delete_entry(
             tool_input["row_id"], DeleteType[tool_input["delete_type"]]
         )
         return json.dumps(
@@ -257,14 +270,14 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
         get_md(phone_number, MdType.AGENT),
         get_conversation(phone_number),
         should_send_contact_message(phone_number),
-        get_active_reminders_and_events(phone_number),
+        get_active_commitments(phone_number),
     )
 
     context = (
         f"<message_history>\n{_render_history(history)}\n</message_history>\n\n"
         f"<user_notes>\n{user_md}\n</user_notes>\n\n"
         f"<agent_notes>\n{agent_md}\n</agent_notes>\n\n"
-        f"<active_reminders_and_events>\n{active_items}\n</active_reminders_and_events>\n\n"
+        f"<active_commitments>\n{active_items}\n</active_commitments>\n\n"
         f"The user just texted you:\n{newest_message}"
     )
 
@@ -273,7 +286,8 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
         get_current_date_and_time_tool_definition(),
         get_create_event_tool_definition(),
         get_create_reminder_tool_definition(),
-        get_delete_reminder_or_event_tool_definition(),
+        get_nag_tool_definition(),
+        get_delete_entry_tool_definition(),
     ]
 
     for _ in range(AGENT_TURN_LIMIT):

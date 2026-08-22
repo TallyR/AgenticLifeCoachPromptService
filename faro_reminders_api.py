@@ -63,9 +63,12 @@ def get_create_reminder_tool_definition() -> dict:
             "the user wants ongoing, long-term nudges — 'every tuesday at 4', "
             "'workdays at 8pm', 'remind me every morning to stretch'. The "
             "reminder fires at the given time on each listed day until it has "
-            "fired number_of_occurrences times in total. The note is the text "
-            "the user receives when it fires, so write it like a message from "
-            "you, not a system alert."
+            "fired number_of_occurrences times in total. For a standing "
+            "'keep after me until it's done' with NO time or cadence attached "
+            "('nag me about the passport until i renew it'), use create_nag "
+            "instead — that rides the daily rundown, not the clock. The note "
+            "is the text the user receives when it fires, so write it like a "
+            "message from you, not a system alert."
         ),
         "input_schema": {
             "type": "object",

@@ -9,17 +9,19 @@ class DeleteType(Enum):
 
     REMINDER = "ReminderToolTable"
     EVENT = "EventToolTable"
+    NAG = "DailyNagTable"
 
     def __init__(self, table: str):
         self.table = table
 
 
-async def delete_reminder_or_event(row_id: int, delete_type: DeleteType) -> bool:
-    """Delete one reminder or event by id.
+async def delete_entry(row_id: int, delete_type: DeleteType) -> bool:
+    """Delete one reminder, event, or nag by id.
 
-    Used instead of edits, or when the user just wants an entry gone.
-    Quietly no-ops if the row doesn't exist. Returns True if a row was
-    deleted, False if nothing matched.
+    Used instead of edits, when the user just wants an entry gone, and for
+    nags it's also how one gets crossed off once it's done. Quietly no-ops
+    if the row doesn't exist. Returns True if a row was deleted, False if
+    nothing matched.
     """
     client = await _get_client()
     response = await (
@@ -36,22 +38,24 @@ async def delete_reminder_or_event(row_id: int, delete_type: DeleteType) -> bool
     return False
 
 
-def get_delete_reminder_or_event_tool_definition() -> dict:
-    """Anthropic tool definition for delete_reminder_or_event.
+def get_delete_entry_tool_definition() -> dict:
+    """Anthropic tool definition for delete_entry.
 
     The schema's delete_type enum is built from DeleteType, so adding a new
     member there automatically shows up here."""
     return {
-        "name": "delete_reminder_or_event",
+        "name": "delete_entry",
         "description": (
-            "Delete one reminder or event by its row id. Use this when the "
-            "user wants an entry gone — and also to CHANGE one: there is no "
-            "editing tool, so to modify an existing reminder or event you "
-            "must delete it with this tool and then recreate it with the "
-            "corrected values via create_reminder or create_event. The id is "
-            "the 'id' field returned when the entry was created. Deleting an "
-            "id that doesn't exist is safe: nothing happens and the result "
-            "says nothing matched."
+            "Delete one reminder, event, or nag by its row id. Use this when "
+            "the user wants an entry gone — and also to CHANGE one: there is "
+            "no editing tool, so to modify an existing entry you must delete "
+            "it with this tool and then recreate it with the corrected values "
+            "via create_reminder, create_event, or create_nag. For a NAG, "
+            "deleting is also how you cross it off: the moment the user says "
+            "that thing is done or tells you to stop nagging, delete the nag. "
+            "The id is the 'id' field returned when the entry was created. "
+            "Deleting an id that doesn't exist is safe: nothing happens and "
+            "the result says nothing matched."
         ),
         "input_schema": {
             "type": "object",
@@ -67,9 +71,9 @@ def get_delete_reminder_or_event_tool_definition() -> dict:
                     "type": "string",
                     "enum": [member.name for member in DeleteType],
                     "description": (
-                        "Which kind of entry to delete: REMINDER (recurring) "
-                        "or EVENT (one-off). Must match what the entry was "
-                        "created as."
+                        "Which kind of entry to delete: REMINDER (recurring), "
+                        "EVENT (one-off), or NAG (standing keep-after-me "
+                        "item). Must match what the entry was created as."
                     ),
                 },
             },
@@ -82,10 +86,10 @@ def get_delete_reminder_or_event_tool_definition() -> dict:
 if __name__ == "__main__":
     async def _test():
         # Deleting an id that doesn't exist: quiet fail, prints, returns False.
-        result = await delete_reminder_or_event(14, DeleteType.EVENT)
+        result = await delete_entry(14, DeleteType.EVENT)
         print("returned:", result)
 
-        result = await delete_reminder_or_event(6, DeleteType.REMINDER)
+        result = await delete_entry(6, DeleteType.REMINDER)
         print("returned:", result)
 
     asyncio.run(_test())
