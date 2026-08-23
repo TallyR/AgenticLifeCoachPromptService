@@ -17,6 +17,17 @@ from faro_delete_tool import (
     get_delete_entry_tool_definition,
 )
 from faro_nag_tool import NAG_TABLE, create_nag, get_nag_tool_definition
+from faro_user_location_tool import (
+    get_set_user_timezone_tool_definition,
+    get_user_timezone,
+    get_user_timezone_tool_definition,
+    set_user_timezone,
+)
+from faro_user_settings_tool import (
+    create_user_setting,
+    get_user_settings,
+    get_user_settings_tool_definition,
+)
 from faro_events_api import (
     EVENT_TABLE,
     create_event,
@@ -238,9 +249,19 @@ async def _execute_tool(name: str, tool_input: dict, phone_number: str) -> str:
     if name == "create_nag":
         row = await create_nag(**tool_input, user_number=phone_number)
         return json.dumps(row)
+    if name == "create_user_setting":
+        row = await create_user_setting(**tool_input, user_number=phone_number)
+        return json.dumps(row)
+    if name == "get_user_timezone":
+        return json.dumps(await get_user_timezone(user_number=phone_number))
+    if name == "set_user_timezone":
+        row = await set_user_timezone(**tool_input, user_number=phone_number)
+        return json.dumps(row)
     if name == "delete_entry":
         deleted = await delete_entry(
-            tool_input["row_id"], DeleteType[tool_input["delete_type"]]
+            tool_input["row_id"],
+            DeleteType[tool_input["delete_type"]],
+            user_number=phone_number,
         )
         return json.dumps(
             {"deleted": deleted}
@@ -265,18 +286,27 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
     # brand-new number and can double-insert. At that point, pull
     # should_send_contact_message OUT of this gather and await it BEFORE.
     # #########################################################################
-    user_md, agent_md, history, send_contact_card, active_items = await asyncio.gather(
+    (
+        user_md,
+        agent_md,
+        history,
+        send_contact_card,
+        active_items,
+        user_settings,
+    ) = await asyncio.gather(
         get_md(phone_number, MdType.USER),
         get_md(phone_number, MdType.AGENT),
         get_conversation(phone_number),
         should_send_contact_message(phone_number),
         get_active_commitments(phone_number),
+        get_user_settings(phone_number),
     )
 
     context = (
         f"<message_history>\n{_render_history(history)}\n</message_history>\n\n"
         f"<user_notes>\n{user_md}\n</user_notes>\n\n"
         f"<agent_notes>\n{agent_md}\n</agent_notes>\n\n"
+        f"<user_settings>\n{user_settings}\n</user_settings>\n\n"
         f"<active_commitments>\n{active_items}\n</active_commitments>\n\n"
         f"The user just texted you:\n{newest_message}"
     )
@@ -288,6 +318,9 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
         get_create_reminder_tool_definition(),
         get_nag_tool_definition(),
         get_delete_entry_tool_definition(),
+        get_user_settings_tool_definition(),
+        get_user_timezone_tool_definition(),
+        get_set_user_timezone_tool_definition(),
     ]
 
     for _ in range(AGENT_TURN_LIMIT):
