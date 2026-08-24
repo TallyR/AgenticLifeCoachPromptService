@@ -59,13 +59,12 @@ def get_user_settings_tool_definition() -> dict:
         "description": (
             "Record one durable note about how the user wants you to work: "
             "their name, their country, a grammar/capitalization preference, "
-            "what they're using you for, and the like. Call it whenever the "
-            "user states or changes such a preference — and also when you "
-            "spot one in the message history that isn't in <user_settings> "
-            "yet (older users predate this tool, so their preferences may "
-            "only live in history; backfill them as you notice). One note "
-            "per setting. To change a setting, record a new note stating "
-            "the current preference — newer notes win."
+            "what they're using you for, and the like. Call it when the "
+            "message you are answering right now states or changes such a "
+            "preference. Never call it because of something you noticed in "
+            "older history on its own — past messages were handled in their "
+            "own turns. One note per setting. To change a setting, record a "
+            "new note stating the current preference — newer notes win."
         ),
         "input_schema": {
             "type": "object",

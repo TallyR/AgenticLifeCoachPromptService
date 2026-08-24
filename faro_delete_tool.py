@@ -69,18 +69,21 @@ def get_delete_entry_tool_definition() -> dict:
         "name": "delete_entry",
         "description": (
             "Delete one reminder, event, nag, or user setting by its row id — "
-            "or the user's saved location. Use this when the user wants an "
-            "entry gone, and also to CHANGE one: there is no editing tool, so "
-            "to modify an existing entry you must delete it and recreate it "
-            "with the corrected values via the matching create tool. For a "
-            "NAG, deleting is also how you cross it off the moment the user "
-            "says it's done. For a SETTING, delete a note that's outdated or "
-            "was recorded wrong (though usually just recording a newer note "
-            "is enough — newer wins). For LOCATION, row_id is ignored (the "
-            "record is keyed to the user, pass 0) — prefer set_user_timezone "
-            "to correct a location; only delete it if the user asks you to "
-            "forget where they live. Deleting something that doesn't exist "
-            "is safe: nothing happens and the result says nothing matched."
+            "or the user's saved location. HARD GATE: only call this when the "
+            "MESSAGE YOU ARE ANSWERING RIGHT NOW asks for it — a cancel, a "
+            "change, or reporting a nagged task done. Never call it to clean "
+            "up an entry that merely looks outdated, unexplained, duplicated, "
+            "or inconsistent with older history: past messages were already "
+            "handled in their own turns, and an entry you can't explain is "
+            "still in force. If the newest message doesn't ask for a removal "
+            "or change, this tool is off the table. Legit uses: the user "
+            "cancels or changes something (delete, and recreate via the "
+            "matching create tool if it's a change — there is no edit tool); "
+            "a NAG's task is declared done in the newest message. For "
+            "LOCATION, row_id is ignored (the record is keyed to the user, "
+            "pass 0) — prefer set_user_timezone to correct a location. "
+            "Deleting something that doesn't exist is safe: nothing happens "
+            "and the result says nothing matched."
         ),
         "input_schema": {
             "type": "object",

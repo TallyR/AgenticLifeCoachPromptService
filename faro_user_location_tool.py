@@ -86,10 +86,10 @@ def get_set_user_timezone_tool_definition() -> dict:
             "Save the user's location: their city or place plus the IANA "
             "timezone you infer from it, e.g. 'new york city — "
             "America/New_York'. One record per user; saving again "
-            "overwrites, so also use this when they move or correct you, "
-            "and to backfill when their city appears in the message history "
-            "but get_user_timezone comes back empty. Keep the note short: "
-            "place, then zone."
+            "overwrites, so also use this when they move or correct you. "
+            "If, while handling the current message, the record is empty "
+            "but the history shows their city, save it as part of that "
+            "job. Keep the note short: place, then zone."
         ),
         "input_schema": {
             "type": "object",
