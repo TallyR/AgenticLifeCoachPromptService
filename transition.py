@@ -43,6 +43,11 @@ from prompt_proc import (
 
 RECONCILE_TURN_LIMIT = 10
 
+# Reconciliation reads deep history on purpose: production's rolling
+# 50-message window would hide the very facts this backfill exists to
+# recover. 3000 is effectively "everything" for current users.
+TRANSITION_MESSAGE_HISTORY_LIMIT = 3000
+
 # Tool names that mutate state — these are the "changes" we report per user.
 MUTATING_TOOLS = {
     "create_user_setting",
@@ -151,7 +156,7 @@ async def reconcile_user(phone_number: str) -> list[str]:
     """Run the reconciliation agent for one user. Returns the list of
     mutating tool calls it made (empty = already converged)."""
     history, settings, commitments, location, auxiliary = await asyncio.gather(
-        get_conversation(phone_number),
+        get_conversation(phone_number, limit=TRANSITION_MESSAGE_HISTORY_LIMIT),
         get_user_settings(phone_number),
         get_active_commitments(phone_number),
         get_user_timezone(phone_number),
@@ -180,6 +185,8 @@ async def reconcile_user(phone_number: str) -> list[str]:
         response = await _llm.beta.messages.create(
             model="claude-fable-5",
             max_tokens=OUTPUT_MAX_TOKENS,
+            # Highest effort tier: one-off backfill, correctness over latency.
+            output_config={"effort": "max"},
             system=TRANSITION_PROMPT,
             messages=messages,
             tools=tools,

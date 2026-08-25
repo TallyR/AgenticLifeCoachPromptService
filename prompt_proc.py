@@ -20,7 +20,6 @@ from faro_nag_tool import NAG_TABLE, create_nag, get_nag_tool_definition
 from faro_user_location_tool import (
     get_set_user_timezone_tool_definition,
     get_user_timezone,
-    get_user_timezone_tool_definition,
     set_user_timezone,
 )
 from faro_user_settings_tool import (
@@ -60,6 +59,11 @@ AGENT_TURN_LIMIT = 10
 # create_event tool calls plus Fable's always-on thinking in one response;
 # 4096 risked truncating that mid-list. 16000 is the SDK's non-streaming default.
 OUTPUT_MAX_TOKENS = 16000
+
+# Rolling history window: only the most recent K messages reach the prompt.
+# Durable state lives in the records (settings, location, commitments), so
+# older messages falling off the window loses nothing load-bearing.
+MESSAGE_HISTORY_LIMIT = 50
 
 
 class MdType(Enum):
@@ -156,8 +160,17 @@ async def mark_contact_message_sent(phone_number: str) -> None:
     )
 
 
-async def get_conversation(phone_number: str) -> list[dict]:
-    """Return every message to or from `phone_number`, oldest first (by sent_at)."""
+async def get_conversation(
+    phone_number: str, limit: int = MESSAGE_HISTORY_LIMIT
+) -> list[dict]:
+    """Return the `limit` most recent messages to or from `phone_number`,
+    oldest first (by sent_at).
+
+    Fetches newest-first with the limit (so the cap keeps the newest, not
+    the oldest), then reverses back to chronological order for the prompt.
+    limit defaults to the production rolling window; transition.py passes
+    its own much higher cap since reconciliation needs the deep history.
+    """
     client = await _get_client()
     response = await (
         client.table(TABLE)
@@ -166,10 +179,21 @@ async def get_conversation(phone_number: str) -> list[dict]:
             f"from_phone_number.eq.{phone_number},"
             f"to_phone_number.eq.{phone_number}"
         )
-        .order("sent_at")
+        .order("sent_at", desc=True)
+        .limit(limit)
         .execute()
     )
-    return response.data
+    rows = list(reversed(response.data))
+
+    # ################## THROWAWAY DEBUG — DELETE BEFORE PROD ##################
+    print(
+        f"[debug] history window for {phone_number}: {len(rows)} message(s) "
+        f"(limit {limit})"
+    )
+    print(_render_history(rows))
+    # ##########################################################################
+
+    return rows
 
 
 async def get_active_commitments(phone_number: str) -> str:
@@ -227,7 +251,7 @@ def _render_history(rows: list[dict]) -> str:
     """Turn the conversation rows into timestamped plain-text lines for the prompt."""
     lines = []
     for row in rows:
-        speaker = "Sarah" if row["from_phone_number"] == "AGENT" else "User"
+        speaker = "Faro" if row["from_phone_number"] == "AGENT" else "User"
         stamp = datetime.fromtimestamp(row["sent_at"], tz=timezone.utc).strftime(
             "%Y-%m-%d %H:%M UTC"
         )
@@ -271,12 +295,19 @@ async def _execute_tool(name: str, tool_input: dict, phone_number: str) -> str:
     raise ValueError(f"unknown tool: {name}")
 
 
-async def process_incoming_text(phone_number: str, newest_message: str) -> tuple[str, bool]:
+async def process_incoming_text(
+    phone_number: str, newest_message: str, effort: str = "medium"
+) -> tuple[str, bool]:
     """Gather this user's context, then run the agent loop: Faro can call its
     tools (current time, events, reminders, delete), each result is fed back
     into the in-turn conversation, and the loop ends when it answers in plain
     text. Tool calls are printed but never saved to Supabase — only the
     incoming text and the final reply reach MessageTable (saved by api.py).
+
+    effort sets the model's thinking depth per call (output_config). Default
+    is "medium" — the latency/cost sweet spot for short texting turns; pass
+    a higher tier for correctness-over-latency runs.
+
     Returns (reply, send_contact_card)."""
     # ############################ BIG ASS WARNING ############################
     # should_send_contact_message is only safe inside this gather while
@@ -293,6 +324,7 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
         send_contact_card,
         active_items,
         user_settings,
+        user_location,
     ) = await asyncio.gather(
         get_md(phone_number, MdType.USER),
         get_md(phone_number, MdType.AGENT),
@@ -300,6 +332,7 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
         should_send_contact_message(phone_number),
         get_active_commitments(phone_number),
         get_user_settings(phone_number),
+        get_user_timezone(phone_number),
     )
 
     context = (
@@ -307,6 +340,7 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
         f"<user_notes>\n{user_md}\n</user_notes>\n\n"
         f"<agent_notes>\n{agent_md}\n</agent_notes>\n\n"
         f"<user_settings>\n{user_settings}\n</user_settings>\n\n"
+        f"<user_location>\n{json.dumps(user_location)}\n</user_location>\n\n"
         f"<active_commitments>\n{active_items}\n</active_commitments>\n\n"
         f"The user just texted you:\n{newest_message}"
     )
@@ -319,7 +353,8 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
         get_nag_tool_definition(),
         get_delete_entry_tool_definition(),
         get_user_settings_tool_definition(),
-        get_user_timezone_tool_definition(),
+        # No get_user_timezone tool here: the location record is pre-fetched
+        # into <user_location> above, which saves the lookup round.
         get_set_user_timezone_tool_definition(),
     ]
 
@@ -327,6 +362,7 @@ async def process_incoming_text(phone_number: str, newest_message: str) -> tuple
         response = await _llm.beta.messages.create(
             model="claude-fable-5",
             max_tokens=OUTPUT_MAX_TOKENS,
+            output_config={"effort": effort},
             system=FARO_SYSTEM_PROMPT,
             messages=messages,
             tools=tools,
