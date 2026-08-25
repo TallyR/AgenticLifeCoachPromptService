@@ -185,14 +185,6 @@ async def get_conversation(
     )
     rows = list(reversed(response.data))
 
-    # ################## THROWAWAY DEBUG — DELETE BEFORE PROD ##################
-    print(
-        f"[debug] history window for {phone_number}: {len(rows)} message(s) "
-        f"(limit {limit})"
-    )
-    print(_render_history(rows))
-    # ##########################################################################
-
     return rows
 
 
